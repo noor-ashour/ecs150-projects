@@ -12,20 +12,22 @@
 
 #include <vector>
 #include <sstream>
-#include <algorithm> // for find() function
 
 using namespace std;
-// TODO better way for redirection: vector<string> redirectionFile
-    // to check for multiple files or no files, use .size()
-// NEXT parallel commands
-// NEXT allow no-whitespace with & and <
 // NEXT batch mode
+// NEXT allow no-whitespace with & and <
+// NOTE: parallel commands, doesn't wait for all processes before printing
+    // ie if one cmd is fine and the other is an error, it prints error for 2nd cmd but runs 1st
 void writeError(); 
-int interactiveMode(string);
+int runShell(string);
+vector<string> processInput(string);
+int parallelCommands(vector<string>);
+int forkAndExecute(vector<string>, bool);
 const char* checkPath(string, vector<const char*>);
 
 vector<const char*>pathsList = {"/bin/"};
 const char* ERROR = strdup("ERROR");
+const string REDIRECTION_SYMBOL = ">";
 
 int main(int argc, char *argv[]) {
     if (argc == 1) {
@@ -35,7 +37,7 @@ int main(int argc, char *argv[]) {
             cout << "wish> ";
             getline(cin, str);
             
-            int ret = interactiveMode(str);
+            int ret = runShell(str);
             if (ret == 1)
                 writeError();
         }       
@@ -56,35 +58,93 @@ void writeError() {
     write(STDERR_FILENO, error_message, strlen(error_message));
 }
 
-// Run shell and let user input commands, return 1 if any error occurs
-int interactiveMode(string str) {
-    vector<string> line;
+// Run shell, calling other functions to fork and execute or run parallel commands
+int runShell(string str) {
+    vector<string> line = processInput(str);
     bool redirect = false;
+
+    if (str.find(REDIRECTION_SYMBOL) != string::npos)
+        redirect = true;
+    
+    if (str.find("&") != string::npos) {
+        if (parallelCommands(line) == 1)
+            return 1;
+    } else {  
+        if (forkAndExecute(line, redirect) == 1)
+            return 1;   
+    }
+         
+    return 0;
+}
+
+// Process string input into vector
+vector<string> processInput(string str) {
     stringstream s(str);
     string w;
-
+    vector<string> v;
+    
+    // Process str into line
     while (s >> w) {
-        // Check for redirection
-        if (w == ">") {
+        v.push_back(w);
+    }
+    
+    return v;
+}
+
+// Call forkAndExecute for parallel commands in a loop
+int parallelCommands(vector<string> line) {
+    // Check if comand is & by itself
+    if (line.size() == 1 && line.front() == "&")
+        return 0; // no error msg
+    
+    vector<string> tempLine;
+    line.push_back("END"); // To check end of string
+    bool redirect = false;
+    for (string l : line) {
+        if (l == REDIRECTION_SYMBOL)
             redirect = true;
-            line.push_back(">");
-        } else line.push_back(w);
+        if (l == "&" || l == "END") {
+            if (forkAndExecute(tempLine, redirect) == 1)
+                return 1;
+            tempLine.clear();
+            redirect = false;
+        } else tempLine.push_back(l);
     }
 
-    // If redirect, set file name and remove from line
-    string redirectionFile;
+    return 0;
+}
+
+// Check the command type, then fork and execute it
+int forkAndExecute(vector<string> line, bool redirect = false) {
+    string redirectionFile = "";
+
+    // Go through line vector to check for redirection command
     if (redirect) {
-        redirectionFile = line.back();
-        if (redirectionFile == "" || redirectionFile == ">")
+        // Check that there's a command behind >
+        if (line.size() < 3) // > fileName
             return 1;
-        else {
-            line.erase(line.end() - 2, line.end()); // remove file name and >
-            // Check for multiple files
-            auto it = find(line.begin(), line.end(), ">");
-            if (it != line.end())
+
+        for (size_t i = 0; i < line.size(); i++) {
+            if (line[i] == REDIRECTION_SYMBOL) {
+                // Check for multiple files
+                if ((i+1) != (line.size()-1))
+                    return 1;
+
+                line.erase(line.begin()+i);
+                redirectionFile = line.back();
+                line.pop_back();
+            }
+        }
+
+        // Check that it's a valid redirection command
+        if (redirectionFile == "" || redirectionFile == REDIRECTION_SYMBOL) {
                 return 1;
         }
     }
+
+    // Check if line is empty before doing anything
+    if (line.size() == 0)
+        return 0; // no error msg
 
     char* arr[line.size() + 1];
 
@@ -124,7 +184,7 @@ int interactiveMode(string str) {
         if (pid == 0) {
             // child
 
-            // Check for ">" redirection
+            // Check for REDIRECTION_SYMBOL redirection for dup2()
             if (redirect) {
                 int fd = open(redirectionFile.c_str(), O_WRONLY + O_TRUNC + O_CREAT);
                 if (fd == -1)
@@ -145,7 +205,7 @@ int interactiveMode(string str) {
             return 1;
         }
     }
-         
+
     return 0;
 }
 
