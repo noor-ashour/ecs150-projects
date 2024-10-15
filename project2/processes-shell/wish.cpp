@@ -14,8 +14,7 @@
 #include <sstream>
 
 using namespace std;
-// NEXT batch mode
-// NEXT allow no-whitespace with & and <
+// TODO allow no-whitespace with & and <
 // NOTE: parallel commands, doesn't wait for all processes before printing
     // ie if one cmd is fine and the other is an error, it prints error for 2nd cmd but runs 1st
 void writeError(); 
@@ -25,7 +24,7 @@ int parallelCommands(vector<string>);
 int forkAndExecute(vector<string>, bool);
 const char* checkPath(string, vector<const char*>);
 
-vector<const char*>pathsList = {"/bin/"};
+vector<const char*>pathsList = {"/bin"};
 const char* ERROR = strdup("ERROR");
 const string REDIRECTION_SYMBOL = ">";
 
@@ -44,7 +43,39 @@ int main(int argc, char *argv[]) {
 
     } else if (argc == 2) {
         /* BATCH MODE */
+        int fd = open(argv[1], O_RDONLY);
+        if (fd == -1)
+            writeError();
+        else {
+            size_t bufferSize = 4096;
+	        char buffer[bufferSize];
+            stringstream ss;
+		    string str;	
+            int ret;
+            while ((ret = read(fd, buffer, bufferSize)) > 0) {
 
+                // Check for read() errors
+                if (ret == -1) {
+                    writeError();
+                    break;
+                }
+
+                ss.write(buffer, ret);
+            }
+            str = ss.str();
+
+            // Go through str line by line
+            string tempStr;
+            for (char c : str) {
+                if (c == '\n') {
+                    if (runShell(tempStr) == 1) {
+                        writeError();
+                    }
+                    tempStr.clear();
+                } else
+                    tempStr += c;
+            }
+        }
     } else { // error, more than one file entered
         writeError();
         exit(1);
@@ -214,9 +245,10 @@ const char* checkPath(string cmd, vector<const char*> pathsList) {
     const char* path = ERROR;
     const char* tempPath;
     string pathStr;
+    string slash = "/";
 
     for (const char* p : pathsList) {
-        pathStr = p + cmd;
+        pathStr = p + slash + cmd;
         tempPath = strdup(pathStr.c_str());
         
         if (access(tempPath, X_OK) == 0) {
