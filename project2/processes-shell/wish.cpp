@@ -14,12 +14,12 @@
 #include <sstream>
 
 using namespace std;
-// TODO allow no-whitespace with & and <
 // NOTE: parallel commands, doesn't wait for all processes before printing
     // ie if one cmd is fine and the other is an error, it prints error for 2nd cmd but runs 1st
 void writeError(); 
 int runShell(string);
 vector<string> processInput(string);
+vector<string> extractNoSpaceCmd(string, char);
 int parallelCommands(vector<string>);
 int forkAndExecute(vector<string>, bool);
 const char* checkPath(string, vector<const char*>);
@@ -44,16 +44,16 @@ int main(int argc, char *argv[]) {
     } else if (argc == 2) {
         /* BATCH MODE */
         int fd = open(argv[1], O_RDONLY);
-        if (fd == -1)
+        if (fd == -1) {
             writeError();
-        else {
+            exit(1);
+        } else {
             size_t bufferSize = 4096;
 	        char buffer[bufferSize];
             stringstream ss;
 		    string str;	
             int ret;
             while ((ret = read(fd, buffer, bufferSize)) > 0) {
-
                 // Check for read() errors
                 if (ret == -1) {
                     writeError();
@@ -83,7 +83,7 @@ int main(int argc, char *argv[]) {
     exit(0);
 }
 
-// Write an error message to stderr
+// Write an error message to STDERR
 void writeError() {
     char error_message[30] = "An error has occurred\n";
     write(STDERR_FILENO, error_message, strlen(error_message));
@@ -91,11 +91,12 @@ void writeError() {
 
 // Run shell, calling other functions to fork and execute or run parallel commands
 int runShell(string str) {
-    vector<string> line = processInput(str);
     bool redirect = false;
 
     if (str.find(REDIRECTION_SYMBOL) != string::npos)
         redirect = true;
+    
+    vector<string> line = processInput(str);
     
     if (str.find("&") != string::npos) {
         if (parallelCommands(line) == 1)
@@ -116,21 +117,60 @@ vector<string> processInput(string str) {
     
     // Process str into line
     while (s >> w) {
-        v.push_back(w);
+        bool redirectOrParallel = false;
+
+        // Check for no-space redirection to re-parse it with spaces
+        if (w.find(REDIRECTION_SYMBOL) != string::npos && w.length() > 1) {
+            redirectOrParallel = true;
+            vector<string> commands = extractNoSpaceCmd(w, REDIRECTION_SYMBOL[0]);
+            v.insert(v.end(), commands.begin(), commands.end()); 
+        } 
+        // Check for no-space & to re-parse it with spaces
+        if (w.find("&") != string::npos && w.length() > 1) {
+            redirectOrParallel = true;
+            if (w.length() == 1) // Check for a single &
+                v.push_back(w);
+            else {
+                vector<string> commands = extractNoSpaceCmd(w, '&');
+                v.insert(v.end(), commands.begin(), commands.end());
+            }
+        }
+
+        if (!redirectOrParallel)
+            v.push_back(w);
     }
     
     return v;
 }
 
+// Given string command with redirect or parallel symbols with no whitespace, parse it properly
+// and return a vector string of the commands
+vector<string> extractNoSpaceCmd(string w, char c) {
+    vector<string> cmd;
+    string charString{c};
+    string spacedRedirection = " " + charString + " ";
+    size_t r = w.find_first_of(charString);
+
+    // Loop to split w into substrings based on c character
+    while (w.find(c) != string::npos) {
+        string arg = w.substr(0, r);
+        cmd.push_back(arg);
+        cmd.push_back(charString);
+        w = w.substr(r+1);     
+    }
+
+    // Push the last substring of w into cmd
+    cmd.push_back(w);
+
+    return cmd;
+}
+
 // Call forkAndExecute for parallel commands in a loop
 int parallelCommands(vector<string> line) {
-    // Check if comand is & by itself
-    if (line.size() == 1 && line.front() == "&")
-        return 0; // no error msg
-    
     vector<string> tempLine;
     line.push_back("END"); // To check end of string
     bool redirect = false;
+
     for (string l : line) {
         if (l == REDIRECTION_SYMBOL)
             redirect = true;
@@ -177,25 +217,25 @@ int forkAndExecute(vector<string> line, bool redirect = false) {
     if (line.size() == 0)
         return 0; // no error msg
 
-    char* arr[line.size() + 1];
+    size_t arrLength = line.size();
+    char* arr[arrLength + 1]; // The +1 is for terminating null char
 
-    for (size_t i = 0; i < line.size(); i++)
+    for (size_t i = 0; i < arrLength; i++)
         arr[i] = strdup(line[i].c_str());
 
     // Add terminating null char
-    arr[line.size()] = NULL;
+    arr[arrLength] = NULL;
 
     //Checking for built-in commands
     if (line.front() == "cd") {
         if (chdir(arr[1]) == -1)
             return 1;
     } else if (line.front() == "path") {
-        if (line.size() <= 1) {
+        if (line.size() <= 1) { // if command is "path" by itself
             pathsList[0] = NULL;
         } else {
-            for (size_t i = 0; i < sizeof(arr) + 1; i++) {
-                pathsList[i] = arr[i+1];
-            }
+            pathsList.clear();
+            pathsList.insert(pathsList.end(), arr+1, arr + arrLength);
         }
     } else if (line.front() == "exit") {
         if (line.size() == 1)
@@ -212,14 +252,13 @@ int forkAndExecute(vector<string> line, bool redirect = false) {
 
         pid_t pid = fork();
 
-        if (pid == 0) {
-            // child
-
-            // Check for REDIRECTION_SYMBOL redirection for dup2()
+        if (pid == 0) { // child
+            // Check for redirection for dup2()
             if (redirect) {
                 int fd = open(redirectionFile.c_str(), O_WRONLY + O_TRUNC + O_CREAT);
                 if (fd == -1)
                     return 1;
+                    
                 if (dup2(fd, STDOUT_FILENO) == -1)
                     return 1;
             }
@@ -228,8 +267,7 @@ int forkAndExecute(vector<string> line, bool redirect = false) {
 
             if (ret_exec == -1) // execv error
                 return 1;
-        } else if (pid > 0) {
-            // parent
+        } else if (pid > 0) { // parent
             wait(NULL);
         } else {
             // error
