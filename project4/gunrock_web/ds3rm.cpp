@@ -23,11 +23,9 @@ int main(int argc, char *argv[]) {
   string entryName = string(argv[3]);
   
   if (fileSystem->unlink(parentInode, entryName) != 0) {
-	  cerr << "Error - unable to remove entry (look up the write string)" << endl;
+	  cerr << "Error removing entry" << endl;
 	  return 1;
   }
-
-  return 0;
 
   return 0;
 }
