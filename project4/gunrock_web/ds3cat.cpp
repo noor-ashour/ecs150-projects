@@ -22,6 +22,15 @@ int main(int argc, char *argv[]) {
   LocalFileSystem *fileSystem = new LocalFileSystem(disk);
   int inodeNumber = stoi(argv[2]);
   */
+  
+
+  // TODO after getting buffer
+  /*
+  if (fileSystem->read(inodeNumber, buffer, sizeof(buffer)) != 0) {
+	  cerr << "Error - unable to remove entry (look up the write string)" << endl;
+	  return 1;
+  }
+  */
 
   return 0;
 }

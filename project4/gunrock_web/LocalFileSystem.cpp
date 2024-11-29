@@ -46,16 +46,43 @@ void LocalFileSystem::writeInodeRegion(super_t *super, inode_t *inodes) {
 }
 
 int LocalFileSystem::lookup(int parentInodeNumber, string name) {
-  inode_t parent_inode;
+  inode_t parentInode;
 
   // Read the parent inode given its number
-  if (stat(parentInodeNumber, &parent_inode) != 0) {
+  if (stat(parentInodeNumber, &parentInode) != 0) {
     return -EINVALIDINODE;
   }
 
-  //for (int i = 0; i < pare)
-  
-  return 0;
+  // Check parentInodeNumber is a parent
+  if (parentInode.type != UFS_DIRECTORY) {
+    return -EINVALIDINODE;
+  }
+
+  for (int i = 0; i < sizeof(parentInode.direct); i++) {
+    int blockNum = parentInode.direct[i];
+
+    // Check if this is an empty directory
+    if (blockNum == 0) {
+      break;
+    }
+
+    size_t dirEntriesSize = UFS_BLOCK_SIZE / sizeof(dir_ent_t);
+    dir_ent_t *dirEntries = new dir_ent_t[dirEntriesSize];
+    disk->readBlock(blockNum, dirEntries);
+
+    // Search through the current directory entry block for name
+    for (int j = 0; j < dirEntriesSize; j++) {
+      if (strcmp(dirEntries[j].name, name.c_str()) == 0) {
+        delete[] dirEntries;
+        return dirEntries[j].inum;
+      }
+    }
+
+    delete[] dirEntries;
+  }
+
+  // If we reach this point, file was not found
+  return -ENOTFOUND;
 }
 
 int LocalFileSystem::stat(int inodeNumber, inode_t *inode) {
@@ -77,6 +104,8 @@ int LocalFileSystem::stat(int inodeNumber, inode_t *inode) {
   for (int i = 0; i < sizeof(target_inode->direct); i++) {
     inode->direct[i] = target_inode->direct[i];
   }
+
+  // TODO handle errors
 
   delete[] inodes;
   return 0;
